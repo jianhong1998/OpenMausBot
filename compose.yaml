@@ -10,14 +10,22 @@ services:
       args:
         BASE_IMAGE: ${OMB_BASE_IMAGE:-ghcr.io/milind-soni/openmausbot:latest}
         ENGINES: ${ENGINES-@anthropic-ai/claude-code @openai/codex}
+        GROK_VERSION: ${GROK_VERSION-1.0.41}
     image: ${OMB_LOCAL_IMAGE:-openmausbot-local:latest}
     restart: unless-stopped
     volumes:
-      - data:/data
+      - ${OMB_DATA_PATH:-/var/lib/openmausbot/data}:/data
       - edge:/run/openmausbot
+      - ../certs:/certs:ro
+      # Mount the host Docker socket so the server can spawn Local VM desktop containers.
+      # On OrbStack: DOCKER_SOCK=~/.orbstack/run/docker.sock DOCKER_GID=20
+      # On Linux with Docker Engine: DOCKER_SOCK=/var/run/docker.sock DOCKER_GID=999 (or check: stat -c %g /var/run/docker.sock)
+      - ${DOCKER_SOCK:-/var/run/docker.sock}:/var/run/docker.sock
+    group_add:
+      - "${DOCKER_GID:-999}"
     environment:
-      OMB_PORT: "8799"
-      OMB_WEBHOOK_PORT: "8800"
+      OMB_PORT: '8799'
+      OMB_WEBHOOK_PORT: '8800'
       # Caddy, in its own container, reaches the server over these (deploy/local/Caddyfile). A request on a socket is
       # never a local one. Caddy does not share the server's network: a server restarted on its own would come back
       # in a new one and leave Caddy, and the port, behind in the old one.
@@ -30,6 +38,11 @@ services:
       # "1": phones pair by QR through MausBot Relay (docs/phone-relay-server.md). Sign the
       # container in once first: docker compose exec omb openmausbot login --relay
       OMB_PHONE_RELAY: ${OMB_PHONE_RELAY:-}
+      NODE_EXTRA_CA_CERTS: /certs/Cloudflare_CA.pem
+      # Host-absolute path to DATA_DIR, used as the bind mount source for Local VM desktop
+      # containers spawned by the host Docker daemon. Must match the host-side path of OMB_DATA_PATH.
+      # Example: OMB_HOST_DATA_DIR=/absolute/path/to/data/.openmausbot
+      OMB_HOST_DATA_DIR: ${OMB_HOST_DATA_DIR:-}
     healthcheck:
       test:
         - CMD
@@ -44,7 +57,7 @@ services:
     image: ${CADDY_IMAGE:-caddy:2}
     restart: unless-stopped
     ports:
-      - "${OMB_BIND_ADDRESS:-127.0.0.1}:${OMB_HTTP_PORT:-8080}:80"
+      - '${OMB_BIND_ADDRESS:-127.0.0.1}:${OMB_HTTP_PORT:-8080}:80'
     environment:
       OMB_HTTPS_HOST: ${OMB_HTTPS_HOST:-}
       OMB_BIND_ADDRESS: ${OMB_BIND_ADDRESS:-127.0.0.1}
@@ -62,6 +75,7 @@ services:
         # An empty list lets any peer claim the HTTPS hostname, which only the
         # loopback bind keeps to the host itself.
         export OMB_TRUSTED_PROXY_CIDRS="$${OMB_TRUSTED_PROXY_CIDRS:-0.0.0.0/0 ::/0}"
+        [ -z "$$OMB_HTTPS_HOST" ] && unset OMB_HTTPS_HOST
         exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     # Started with the server, not after it is healthy: Caddy reaches it over the socket
     # whenever it answers, so `up` never waits on the server's health, and HTTPS is back
@@ -75,9 +89,6 @@ services:
       - caddy_data:/data
       - caddy_config:/config
 volumes:
-  data:
-    external: ${OMB_DATA_EXTERNAL:-false}
-    name: ${OMB_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:-openmausbot}_data}
   # The two sockets: in memory, made afresh by the server at each start. Not under /data, which every bot's sandbox
   # sees; the sandbox has its own /run.
   edge:
