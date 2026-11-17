@@ -43,3 +43,8 @@ deploy/podman/.env
 deploy/podman/.env.*
 !deploy/podman/.env.example
 /.env
+
+# Local runtime data (host bind mount for desktop VM workspaces)
+/data/
+# Local server config (lives in the data volume, not the repo)
+/config.json

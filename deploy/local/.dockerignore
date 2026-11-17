@@ -1,2 +1,4 @@
 *
 !Dockerfile
+!entrypoint-wrapper.sh
+!patch-bundle.js
